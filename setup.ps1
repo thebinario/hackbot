@@ -1,13 +1,12 @@
-# Sets up hackbot itself (venv + deps), pulls the Ollama models it needs, and clones
-# auto-bug-bounty as a sibling folder -- the recon side still lives there until its
-# hunt_rag.py bridge is validated enough to migrate into this repo too.
+# Sets up hackbot itself (venv + deps), pulls the Ollama models it needs, and initializes
+# the Git submodules under external/ (auto-bug-bounty + rag-cyber-frameworks). The recon
+# side still lives in auto-bug-bounty until its hunt_rag.py bridge is validated enough to
+# migrate into this repo too.
 
 $ErrorActionPreference = "Stop"
 
 $RootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ParentDir = Split-Path -Parent $RootDir
-$ReconRepo = Join-Path $ParentDir "auto-bug-bounty"
-$GitUser = if ($env:HACKBOT_GITHUB_USER) { $env:HACKBOT_GITHUB_USER } else { "thebinario" }
+$ReconRepo = Join-Path $RootDir "external\auto-bug-bounty"
 
 Write-Host "== hackbot's own environment =="
 $venv = Join-Path $RootDir ".venv"
@@ -29,13 +28,8 @@ if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {
     }
 }
 
-Write-Host "== Recon lab (auto-bug-bounty, still experimental) =="
-if (Test-Path (Join-Path $ReconRepo ".git")) {
-    Write-Host "[skip] auto-bug-bounty already cloned at $ReconRepo"
-} else {
-    Write-Host "[clone] auto-bug-bounty -> $ReconRepo"
-    git clone "https://github.com/$GitUser/auto-bug-bounty.git" $ReconRepo
-}
+Write-Host "== Submodules (external/) =="
+git -C $RootDir submodule update --init --recursive
 $reconReq = Join-Path $ReconRepo "requirements.txt"
 if (Test-Path $reconReq) {
     $reconVenv = Join-Path $ReconRepo ".venv"
@@ -49,6 +43,6 @@ if (Test-Path $reconReq) {
 Write-Host ""
 Write-Host "Setup finished."
 Write-Host "  $RootDir          <- hackbot (RAG de writeups, roda sozinho)"
-Write-Host "  $ReconRepo  <- recon experimental, chama o hackbot via HTTP local"
+Write-Host "  $ReconRepo  <- recon experimental (submodulo), chama o hackbot via HTTP local"
 Write-Host ""
 Write-Host "Proximo passo: .\run_pipeline.ps1 -TargetHost <host> -Program <program> -Platform <hackerone|intigriti>"

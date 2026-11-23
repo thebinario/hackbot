@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Sets up hackbot itself (venv + deps), pulls the Ollama models it needs, and clones
-# auto-bug-bounty as a sibling folder — the recon side still lives there until its
-# hunt_rag.py bridge is validated enough to migrate into this repo too.
+# Sets up hackbot itself (venv + deps), pulls the Ollama models it needs, and initializes
+# the Git submodules under external/ (auto-bug-bounty + rag-cyber-frameworks). The recon
+# side still lives in auto-bug-bounty until its hunt_rag.py bridge is validated enough to
+# migrate into this repo too.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PARENT_DIR="$(cd "$ROOT_DIR/.." && pwd)"
-RECON_REPO="$PARENT_DIR/auto-bug-bounty"
-GIT_USER="${HACKBOT_GITHUB_USER:-thebinario}"
+RECON_REPO="$ROOT_DIR/external/auto-bug-bounty"
 
 echo "== hackbot's own environment =="
 if [ ! -d "$ROOT_DIR/.venv" ]; then
@@ -28,13 +27,8 @@ else
   done
 fi
 
-echo "== Recon lab (auto-bug-bounty, still experimental) =="
-if [ -d "$RECON_REPO/.git" ]; then
-  echo "[skip] auto-bug-bounty already cloned at $RECON_REPO"
-else
-  echo "[clone] auto-bug-bounty -> $RECON_REPO"
-  git clone "https://github.com/$GIT_USER/auto-bug-bounty.git" "$RECON_REPO"
-fi
+echo "== Submodules (external/) =="
+git -C "$ROOT_DIR" submodule update --init --recursive
 if [ -f "$RECON_REPO/requirements.txt" ]; then
   if [ ! -d "$RECON_REPO/.venv" ]; then
     python3 -m venv "$RECON_REPO/.venv"
@@ -47,7 +41,7 @@ cat <<EOF
 
 Setup finished.
   $ROOT_DIR          <- hackbot (RAG de writeups, roda sozinho)
-  $RECON_REPO  <- recon experimental, chama o hackbot via HTTP local
+  $RECON_REPO  <- recon experimental (submódulo), chama o hackbot via HTTP local
 
 Próximo passo: ./run_pipeline.sh --host <host> --program <program> --platform <hackerone|intigriti>
 EOF

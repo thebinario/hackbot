@@ -9,8 +9,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PARENT_DIR="$(cd "$ROOT_DIR/.." && pwd)"
-RECON_REPO="$PARENT_DIR/auto-bug-bounty"
+RECON_REPO="$ROOT_DIR/external/auto-bug-bounty"
 
 API_URL="${HACKBOT_API_URL:-http://127.0.0.1:8765}"
 API_HEALTH="$API_URL/health"
@@ -38,7 +37,7 @@ done
 [ -z "$HOST" ] || [ -z "$PROGRAM" ] || [ -z "$PLATFORM" ] && usage
 
 if [ ! -d "$RECON_REPO" ]; then
-  echo "[error] expected sibling repo missing: $RECON_REPO (run ./setup.sh first)" >&2
+  echo "[error] expected submodule missing: $RECON_REPO (run ./setup.sh or 'git submodule update --init --recursive')" >&2
   exit 1
 fi
 

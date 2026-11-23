@@ -25,11 +25,10 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ParentDir = Split-Path -Parent $RootDir
-$ReconRepo = Join-Path $ParentDir "auto-bug-bounty"
+$ReconRepo = Join-Path $RootDir "external\auto-bug-bounty"
 
 if (-not (Test-Path $ReconRepo)) {
-    Write-Error "Expected sibling repo missing: $ReconRepo (run .\setup.ps1 first)"
+    Write-Error "Expected submodule missing: $ReconRepo (run .\setup.ps1 or 'git submodule update --init --recursive')"
     exit 1
 }
 

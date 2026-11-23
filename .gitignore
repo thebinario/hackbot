@@ -7,6 +7,3 @@ data/vectorstore/chroma/
 
 # Writeups corpus is third-party material (fetched from HackerOne, etc.) and stays local
 data/processed/writeups/
-
-# recon experiment repo clones for local pipeline runs
-/auto-bug-bounty/

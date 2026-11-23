@@ -7,7 +7,7 @@ para um cenário de recon.
 ## Status: migrando de experimentos para projeto único
 
 Este código nasceu em dois repositórios de experimentação, que continuam existindo como
-laboratório:
+laboratório. Ambos ficam versionados como submódulos Git em `external/`:
 
 - **[rag-cyber-frameworks](https://github.com/thebinario/rag-cyber-frameworks)** — onde o
   pipeline de RAG para writeups foi prototipado e validado (extração, embeddings com prefixos
@@ -15,8 +15,8 @@ laboratório:
 - **[auto-bug-bounty](https://github.com/thebinario/auto-bug-bounty)** — pipeline de recon CI
   (subfinder, amass, httpx, nmap, katana, ffuf, whatweb, nuclei) contra programas no
   HackerOne/Intigriti, e a ponte experimental `hunt_rag.py` que chama este serviço. **Ainda
-  não migrado** — continua sendo consumido como repo irmão até o fluxo de recon+bridge estar
-  validado em produção, como o RAG de writeups já está.
+  não migrado** — continua sendo consumido como submódulo em `external/auto-bug-bounty` até o
+  fluxo de recon+bridge estar validado em produção, como o RAG de writeups já está.
 
 A regra é: os dois repos continuam como PoC/laboratório; só o que já funciona de ponta a
 ponta é trazido para cá, e só o necessário — sem duplicar o resto do framework genérico de
@@ -42,6 +42,9 @@ scripts/
 ├── serve_api.py         # sobe a API local (porta 8765)
 └── fetch_writeups.py    # baixa reports públicos/disclosed do HackerOne
 tests/                   # 90 testes, cobrindo todo o módulo writeups
+external/                # submódulos Git (ver .gitmodules)
+├── auto-bug-bounty/     # recon experimental, chama a API via HTTP
+└── rag-cyber-frameworks/# laboratório do RAG genérico
 ```
 
 Isto é exatamente o que existia em `rag-cyber-frameworks` sob `app/writeups/`, mais o
@@ -52,10 +55,16 @@ parte do hackbot.
 ## Setup
 
 ```bash
+# clone já com os submódulos (ou rode `git submodule update --init --recursive` depois)
+git clone --recurse-submodules https://github.com/thebinario/hackbot.git
+cd hackbot
+
 py -3.13 -m venv .venv
 .venv\Scripts\activate   # linux: source .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+> `./setup.ps1` / `./setup.sh` também inicializam os submódulos em `external/` automaticamente.
 
 Precisa de [Ollama](https://ollama.com) instalado à parte, com os modelos:
 
@@ -78,7 +87,7 @@ python scripts/serve_api.py
 ```
 
 Veja [`docs/architecture.md`](docs/architecture.md) para como isso se encaixa com o pipeline
-de recon ainda hospedado em `auto-bug-bounty`.
+de recon ainda hospedado no submódulo `external/auto-bug-bounty`.
 
 ## Testes
 

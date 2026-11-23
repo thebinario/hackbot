@@ -1,0 +1,6 @@
+[submodule "external/auto-bug-bounty"]
+	path = external/auto-bug-bounty
+	url = https://github.com/thebinario/auto-bug-bounty.git
+[submodule "external/rag-cyber-frameworks"]
+	path = external/rag-cyber-frameworks
+	url = https://github.com/thebinario/rag-cyber-frameworks.git

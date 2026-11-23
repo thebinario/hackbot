@@ -22,9 +22,10 @@
 ```
 
 `hackbot` já hospeda o módulo de RAG de writeups como código próprio — não depende mais de
-clonar `rag-cyber-frameworks` ao lado para funcionar. `auto-bug-bounty` continua sendo o
-laboratório onde o recon e a ponte `hunt_rag.py` são testados; ele chama a API deste repo
-por HTTP, sempre em `127.0.0.1`.
+clonar `rag-cyber-frameworks` ao lado para funcionar. `rag-cyber-frameworks` e
+`auto-bug-bounty` ficam versionados como submódulos Git em `external/`; o recon e a ponte
+`hunt_rag.py` continuam sendo testados em `external/auto-bug-bounty`, que chama a API deste
+repo por HTTP, sempre em `127.0.0.1`.
 
 ## Por que a migração é incremental
 
@@ -47,20 +48,22 @@ laboratório de recon.
 
 ## Rodando o fluxo completo hoje
 
-Enquanto o recon ainda mora em `auto-bug-bounty`, o fluxo de ponta a ponta precisa dos dois
-repositórios lado a lado:
+Enquanto o recon ainda mora em `auto-bug-bounty`, o fluxo de ponta a ponta precisa dos
+submódulos inicializados:
 
 ```
-workspace/
-├── hackbot/            (este repo)
-└── auto-bug-bounty/    (clonado à parte)
+hackbot/
+├── external/
+│   ├── auto-bug-bounty/       (submódulo — recon experimental)
+│   └── rag-cyber-frameworks/  (submódulo — laboratório do RAG genérico)
 ```
 
 ```bash
 # neste repo
 python scripts/serve_api.py &
 
-# no auto-bug-bounty
+# no submódulo de recon
+cd external/auto-bug-bounty
 python scripts/recon/hunt.py --host example.com --program my-prog --platform hackerone
 python scripts/recon/hunt_rag.py --host example.com --program my-prog --platform hackerone
 ```
