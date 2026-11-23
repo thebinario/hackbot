@@ -339,6 +339,9 @@ def run_recon_agent(
     tool_schemas = ollama_tool_schemas()
     steps: list[PlannedStep] = []
     stop_reason = "max_steps"
+    noop_streak = 0          # consecutive steps that ran nothing (skip/block/error)
+    subdomain_reruns = 0     # force at most one re-run of the gating discovery step
+    MAX_NOOP_STEPS = 3       # bail out instead of spinning to max_steps on no progress
 
     for step_index in range(1, max_steps + 1):
         state = ReconState(result_dir)
@@ -375,15 +378,37 @@ def run_recon_agent(
             log(f"[step {step_index}] {note}")
             steps.append(PlannedStep(step_index, name, reason, False, False, note))
             messages.append({"role": "tool", "tool_name": name, "content": f"ERROR: {note}. Pick a valid capability."})
+            noop_streak += 1
+            if noop_streak >= MAX_NOOP_STEPS:
+                log(f"[step {step_index}] no progress for {noop_streak} steps; stopping.")
+                stop_reason = "no_progress"
+                break
             continue
 
         # Guard: already done?
         if name in completed:
-            note = "capability already completed; not re-running"
-            log(f"[step {step_index}] {name}: {note}")
-            steps.append(PlannedStep(step_index, name, reason, False, True, note))
-            messages.append({"role": "tool", "tool_name": name, "content": f"SKIPPED: {note}."})
-            continue
+            # Exception: the discovery step "completed" but found no live hosts (e.g. a
+            # prior run with mis-configured tools). Everything downstream is dead without
+            # it, so force exactly one re-run instead of skipping forever.
+            force_rerun = (
+                name == "subdomain_enum"
+                and state.summary().get("live_host_count", 0) == 0
+                and subdomain_reruns == 0
+            )
+            if force_rerun:
+                subdomain_reruns += 1
+                log(f"[step {step_index}] {name}: completed but 0 live hosts — forcing one re-run")
+            else:
+                note = "capability already completed; not re-running"
+                log(f"[step {step_index}] {name}: {note}")
+                steps.append(PlannedStep(step_index, name, reason, False, True, note))
+                messages.append({"role": "tool", "tool_name": name, "content": f"SKIPPED: {note}. Pick a DIFFERENT capability or finish_recon."})
+                noop_streak += 1
+                if noop_streak >= MAX_NOOP_STEPS:
+                    log(f"[step {step_index}] no progress for {noop_streak} steps; stopping.")
+                    stop_reason = "no_progress"
+                    break
+                continue
 
         # Guard: unmet dependencies?
         unmet = _unmet_requirements(name, completed, result_dir)
@@ -394,6 +419,11 @@ def run_recon_agent(
             messages.append(
                 {"role": "tool", "tool_name": name, "content": f"BLOCKED: {note}. Run the prerequisite capability first."}
             )
+            noop_streak += 1
+            if noop_streak >= MAX_NOOP_STEPS:
+                log(f"[step {step_index}] no progress for {noop_streak} steps; stopping.")
+                stop_reason = "no_progress"
+                break
             continue
 
         # Guard: missing binaries?
@@ -405,9 +435,15 @@ def run_recon_agent(
             messages.append(
                 {"role": "tool", "tool_name": name, "content": f"UNAVAILABLE: {note}. Choose a different capability or finish."}
             )
+            noop_streak += 1
+            if noop_streak >= MAX_NOOP_STEPS:
+                log(f"[step {step_index}] no progress for {noop_streak} steps; stopping.")
+                stop_reason = "no_progress"
+                break
             continue
 
         log(f"[step {step_index}] running {name} — {reason}")
+        noop_streak = 0  # a real run happened — reset the no-progress counter
         result: ToolResult = executor.run(name)
         note = (
             f"ok, new/updated artifacts: {', '.join(result.new_artifacts) or 'none'}"
