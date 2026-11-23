@@ -14,6 +14,14 @@ from app.runtime import ensure_supported_python
 
 ensure_supported_python()
 
+# Report titles can contain redactions (█) and other non-ASCII; Windows defaults
+# stdout to cp1252 and would crash printing them. Force UTF-8.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+    except (AttributeError, ValueError, OSError):
+        pass
+
 from app.writeups import (
     build_embedding_client,
     build_extraction_client,

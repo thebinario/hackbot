@@ -115,6 +115,91 @@ def report_to_markdown(report_id: int, data: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+HACKTIVITY_GRAPHQL_URL = "https://hackerone.com/graphql"
+HACKTIVITY_INDEX = "CompleteHacktivityReportIndex"
+HACKTIVITY_PAGE_SIZE = 100
+DEFAULT_DISCOVERY_QUERY = "disclosed:true"
+_HACKTIVITY_QUERY = (
+    "query($q:String,$first:Int,$after:String){"
+    "search(index:" + HACKTIVITY_INDEX + ",query_string:$q,first:$first,after:$after){"
+    "pageInfo{hasNextPage endCursor} "
+    "edges{node{... on HacktivityDocument{disclosed_at report{databaseId:_id title}}}}}}"
+)
+
+
+def _graphql_post(payload: dict[str, Any], opener: Opener = request.urlopen, sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
+    """POST a query to the public HackerOne GraphQL endpoint. No credentials are ever sent."""
+    body = json.dumps(payload).encode("utf-8")
+    http_request = request.Request(
+        HACKTIVITY_GRAPHQL_URL,
+        data=body,
+        headers={"User-Agent": USER_AGENT, "Content-Type": "application/json", "Accept": "application/json"},
+    )
+    try:
+        with opener(http_request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+            raw = response.read().decode("utf-8")
+    except error.HTTPError as exc:
+        if exc.code == 429:
+            raise RateLimited("HackerOne rate-limited the discovery query (HTTP 429)") from exc
+        raise FetchError(f"discovery HTTP {exc.code}") from exc
+    except error.URLError as exc:
+        raise FetchError(f"could not reach HackerOne GraphQL: {exc.reason}") from exc
+    try:
+        payload_out = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise FetchError("HackerOne GraphQL returned non-JSON (endpoint or schema changed)") from exc
+    if payload_out.get("errors"):
+        raise FetchError(f"HackerOne GraphQL errors: {json.dumps(payload_out['errors'])[:300]}")
+    return payload_out.get("data") or {}
+
+
+def discover_disclosed_report_ids(
+    count: int,
+    *,
+    query: str = DEFAULT_DISCOVERY_QUERY,
+    opener: Opener = request.urlopen,
+    sleep: Callable[[float], None] = time.sleep,
+    delay_seconds: float = DEFAULT_DELAY_SECONDS,
+) -> list[int]:
+    """Discover publicly disclosed report ids from the HackerOne hacktivity feed.
+
+    Pages through the public hacktivity search (no auth, no credentials) and returns
+    up to ``count`` disclosed report ids. This is what makes ingestion autonomous: no
+    ids need to be supplied by hand.
+    """
+    if count <= 0:
+        return []
+    delay = max(delay_seconds, MIN_DELAY_SECONDS)
+    ids: list[int] = []
+    seen: set[int] = set()
+    cursor: str | None = None
+    while len(ids) < count:
+        variables: dict[str, Any] = {"q": query, "first": min(HACKTIVITY_PAGE_SIZE, count - len(ids))}
+        if cursor:
+            variables["after"] = cursor
+        data = _graphql_post({"query": _HACKTIVITY_QUERY, "variables": variables}, opener=opener, sleep=sleep)
+        search = data.get("search") or {}
+        edges = search.get("edges") or []
+        if not edges:
+            break
+        for edge in edges:
+            report = ((edge or {}).get("node") or {}).get("report") or {}
+            try:
+                rid = int(report.get("databaseId"))
+            except (TypeError, ValueError):
+                continue
+            if rid not in seen:
+                seen.add(rid)
+                ids.append(rid)
+        page_info = search.get("pageInfo") or {}
+        cursor = page_info.get("endCursor")
+        if not page_info.get("hasNextPage") or not cursor:
+            break
+        if len(ids) < count:
+            sleep(delay)
+    return ids[:count]
+
+
 def fetch_report_json(
     report_id: int,
     opener: Opener = request.urlopen,

@@ -38,6 +38,17 @@ class ToolResult:
     skipped_reason: str = ""
 
 
+@dataclass
+class ExploitRun:
+    engine: str
+    ok: bool
+    returncode: int
+    stdout_tail: str
+    out_dir: str
+    flags: list[str]
+    error: str = ""
+
+
 def _tail(text: str, lines: int = 12) -> str:
     rows = [r for r in (text or "").splitlines() if r.strip()]
     return "\n".join(rows[-lines:])
@@ -154,4 +165,50 @@ class ReconExecutor:
             stdout_tail=_tail(proc.stdout),
             stderr_tail=_tail(proc.stderr),
             new_artifacts=new_artifacts or produced_now,
+        )
+
+    def run_exploit_engine(self, engine, recon_dir: Path, out_dir: Path) -> ExploitRun:
+        """Hand the recon results to an exploitation engine submodule."""
+        from .exploit_engines import build_engine_argv
+
+        cwd = _HACKBOT_ROOT / engine.submodule
+        if not cwd.exists():
+            return ExploitRun(engine.name, False, -1, "", str(out_dir), [], error=f"submodule missing: {cwd}")
+
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        argv = build_engine_argv(
+            engine,
+            self.python,
+            self.host,
+            self.program,
+            self.platform,
+            str(Path(recon_dir).resolve()),
+            str(out_dir.resolve()),
+        )
+        try:
+            proc = subprocess.run(
+                argv,
+                cwd=str(cwd),
+                env=self._env(),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=self.step_timeout_seconds,
+            )
+        except subprocess.TimeoutExpired:
+            return ExploitRun(engine.name, False, -1, "", str(out_dir), [], error=f"timed out after {self.step_timeout_seconds}s")
+
+        flags: list[str] = []
+        flags_file = out_dir / "flags.txt"
+        if flags_file.exists():
+            flags = [l.strip() for l in flags_file.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()]
+        return ExploitRun(
+            engine=engine.name,
+            ok=proc.returncode == 0,
+            returncode=proc.returncode,
+            stdout_tail=_tail(proc.stdout, 20),
+            out_dir=str(out_dir),
+            flags=flags,
         )

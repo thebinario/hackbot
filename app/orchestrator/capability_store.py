@@ -23,6 +23,7 @@ from app.writeups.store import (
     embedding_format,
 )
 
+from .exploit_engines import capability_documents as engine_documents
 from .tool_registry import capability_documents
 
 DEFAULT_CAPABILITIES_COLLECTION_NAME = "recon_capabilities"
@@ -33,8 +34,8 @@ def index_capabilities(
     persist_directory: str | Path = DEFAULT_CHROMA_PERSIST_DIRECTORY,
     collection_name: str = DEFAULT_CAPABILITIES_COLLECTION_NAME,
 ) -> int:
-    """Embed every registry capability into the collection. Returns the count."""
-    docs = capability_documents()
+    """Embed every recon capability and exploitation engine into the collection."""
+    docs = capability_documents() + engine_documents()
     collection = _get_collection(persist_directory, collection_name, create=True)
     fmt = embedding_format(client)
     for doc in docs:

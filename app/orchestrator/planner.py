@@ -29,6 +29,13 @@ from app.rag.vector_store import DEFAULT_CHROMA_PERSIST_DIRECTORY
 
 from .capability_store import search_capabilities
 from .executor import ReconExecutor, ToolResult
+from .exploit_engines import (
+    EXPLOIT_ENGINES,
+    SKIP_ENGINE_NAME,
+    ExploitEngine,
+    get_engine,
+    ollama_engine_schemas,
+)
 from .state import ReconState
 from .tool_registry import (
     FINISH_TOOL_NAME,
@@ -77,6 +84,9 @@ class AgentRun:
     capability_sources: list[str]
     analysis: ScenarioAnalysis | None
     stop_reason: str
+    exploit_engine: str = ""
+    exploit_reason: str = ""
+    exploit_result: dict[str, Any] | None = None
 
 
 def _available_binaries(tools_dir: str) -> Callable[[str], bool]:
@@ -224,6 +234,37 @@ def _build_scenario(host: str, state: dict[str, Any], result_dir: Path, leads: l
     return "\n".join(parts)
 
 
+def _choose_engine(gen_client, host: str, state: dict[str, Any], leads: list[dict[str, Any]]) -> tuple[ExploitEngine | None, str]:
+    """Let the LLM pick one exploitation engine (or skip) from the registry knowledge."""
+    knowledge = "\n\n".join(e.capability_text() for e in EXPLOIT_ENGINES)
+    lead_text = "; ".join(_format_lead(lead) for lead in leads[:10]) or "no concrete leads"
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You select at most one exploitation/validation engine to run against an in-scope "
+                "target, based on what recon found. Call the engine that best fits, or skip_exploitation "
+                "if none fits. Base the choice on the engine knowledge and the concrete findings."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Host: {host}\nTechnologies: {', '.join(state.get('technologies') or []) or 'unknown'}\n"
+                f"Concrete findings: {lead_text}\n\nAvailable engines:\n{knowledge}\n\nChoose one engine, or skip."
+            ),
+        },
+    ]
+    try:
+        message = gen_client.chat(messages, tools=ollama_engine_schemas(), options={"temperature": 0.1})
+    except Exception as exc:  # fall back to no engine on any model/transport error
+        return None, f"engine selection failed: {exc}"
+    name, reason = _extract_choice(message if isinstance(message, dict) else {})
+    if not name or name == SKIP_ENGINE_NAME:
+        return None, reason or "model skipped exploitation"
+    return get_engine(name), reason
+
+
 def run_recon_agent(
     host: str,
     program: str,
@@ -234,6 +275,7 @@ def run_recon_agent(
     recon_repo: Path | None = None,
     max_steps: int = DEFAULT_MAX_STEPS,
     top_k: int = 4,
+    exploit_engine: str = "auto",
     persist_directory: str | Path = DEFAULT_CHROMA_PERSIST_DIRECTORY,
     on_event: Callable[[str], None] | None = None,
 ) -> AgentRun:
@@ -398,6 +440,36 @@ def run_recon_agent(
     else:
         log("[final] no live hosts collected; skipping hypothesis generation")
 
+    # Optional hand-off to an exploitation engine (LLM-chosen when exploit_engine == "auto").
+    engine_name = ""
+    engine_reason = ""
+    exploit_result: dict[str, Any] | None = None
+    if exploit_engine != "none" and final_state.get("live_host_count"):
+        if exploit_engine == "auto":
+            engine, engine_reason = _choose_engine(gen_client, host, final_state, leads)
+        else:
+            engine = get_engine(exploit_engine)
+            engine_reason = f"forced via --exploit-engine {exploit_engine}"
+            if engine is None:
+                engine_reason = f"unknown engine '{exploit_engine}'; skipping"
+        if engine is not None:
+            engine_name = engine.name
+            log(f"[exploit] {engine.name}: {engine_reason}")
+            run = executor.run_exploit_engine(engine, result_dir, result_dir / f"exploit_{engine.name}")
+            exploit_result = {
+                "engine": run.engine,
+                "ok": run.ok,
+                "returncode": run.returncode,
+                "flags": run.flags,
+                "out_dir": run.out_dir,
+                "error": run.error,
+                "stdout_tail": run.stdout_tail,
+            }
+            summary = f"ok, {len(run.flags)} flag(s)" if run.ok else f"failed ({run.error or 'rc=' + str(run.returncode)})"
+            log(f"[exploit] {engine.name}: {summary}")
+        else:
+            log(f"[exploit] no engine run: {engine_reason}")
+
     return AgentRun(
         host=host,
         program=program,
@@ -407,4 +479,7 @@ def run_recon_agent(
         capability_sources=capability_sources,
         analysis=analysis,
         stop_reason=stop_reason,
+        exploit_engine=engine_name,
+        exploit_reason=engine_reason,
+        exploit_result=exploit_result,
     )

@@ -42,6 +42,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--recon-repo", default=None, help=f"Path to auto-bug-bounty (default: {DEFAULT_RECON_REPO}).")
     parser.add_argument("--max-steps", type=int, default=8)
     parser.add_argument("--top-k", type=int, default=4)
+    parser.add_argument(
+        "--exploit-engine",
+        default="auto",
+        choices=["auto", "auto-exploit", "auto-vuln", "none"],
+        help="Exploitation engine after recon: 'auto' lets the LLM choose, or force one, or 'none'.",
+    )
     return parser
 
 
@@ -71,6 +77,16 @@ def build_report(run: AgentRun) -> str:
                 f"- **{str(lead.get('severity', '')).upper()}** {lead.get('kind')}: {lead.get('url')}{status}"
             )
     lines += ["", "## Final recon state", "", "```json", json.dumps(run.final_state, indent=2, ensure_ascii=False), "```", ""]
+    if run.exploit_engine or run.exploit_reason:
+        lines += ["## Exploitation engine", ""]
+        lines.append(f"- Engine: **{run.exploit_engine or 'none'}** — {run.exploit_reason}")
+        if run.exploit_result:
+            r = run.exploit_result
+            status = "ok" if r.get("ok") else f"failed ({r.get('error') or 'rc=' + str(r.get('returncode'))})"
+            lines.append(f"- Result: {status}; output: {r.get('out_dir')}")
+            for flag in r.get("flags") or []:
+                lines.append(f"  - 🏁 `{flag}`")
+        lines.append("")
     if run.analysis is not None:
         lines += ["## Writeup-grounded hypotheses", "", run.analysis.answer, "", "### Reports used", ""]
         for report, distance in zip(run.analysis.reports, run.analysis.distances):
@@ -94,6 +110,7 @@ def main() -> int:
         recon_repo=Path(args.recon_repo) if args.recon_repo else None,
         max_steps=args.max_steps,
         top_k=args.top_k,
+        exploit_engine=args.exploit_engine,
         persist_directory=PERSIST_DIRECTORY,
         on_event=lambda m: print(m, flush=True),
     )
@@ -116,6 +133,9 @@ def main() -> int:
         "capability_sources": run.capability_sources,
         "steps": [vars(s) for s in run.steps],
         "final_state": run.final_state,
+        "exploit_engine": run.exploit_engine,
+        "exploit_reason": run.exploit_reason,
+        "exploit_result": run.exploit_result,
         "analysis": (
             {
                 "answer": run.analysis.answer,
