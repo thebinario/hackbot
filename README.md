@@ -52,8 +52,8 @@ parte do hackbot.
 ## Setup
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+py -3.13 -m venv .venv
+.venv\Scripts\activate   # linux: source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
