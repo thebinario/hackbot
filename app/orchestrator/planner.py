@@ -36,6 +36,7 @@ from .exploit_engines import (
     get_engine,
     ollama_engine_schemas,
 )
+from .scope_manager import ScopeManager
 from .state import ReconState
 from .tool_registry import (
     FINISH_TOOL_NAME,
@@ -46,6 +47,21 @@ from .tool_registry import (
 )
 
 DEFAULT_MAX_STEPS = 8
+REVIEW_SCOPE_TOOL_NAME = "review_scope"
+
+REVIEW_SCOPE_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": REVIEW_SCOPE_TOOL_NAME,
+        "description": (
+            "Ask the operator which newly discovered hosts to add to the authorized scope "
+            "(accept) or block. Call this after subdomain_enum when discovery turned up hosts "
+            "that are not yet in scope, BEFORE trying to probe them — accepted hosts become "
+            "in-scope and can then be re-enumerated; blocked hosts are remembered and never asked again."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+}
 
 SYSTEM_PROMPT = (
     "You are a local reconnaissance planner for authorized security testing. "
@@ -57,6 +73,8 @@ SYSTEM_PROMPT = (
     "- Respect dependencies: subdomain_enum first (it finds the live hosts everything else needs); "
     "tech_detect/web_crawl/dir_fuzz need live hosts; nuclei_scan needs a detected stack.\n"
     "- Do not repeat a capability that already completed unless you have a concrete reason.\n"
+    "- If subdomain_enum discovers hosts that are not yet in scope, call review_scope to ask the "
+    "operator which to add before probing them; after they accept, re-run subdomain_enum to probe the new hosts.\n"
     "- Prefer breadth first (surface, stack, endpoints, hidden paths), heavy/vuln steps last.\n"
     "- Finish once the surface, stack, endpoints and fuzz signals give enough to form hypotheses, "
     "or when the only remaining tools are unavailable or low-value here."
@@ -133,7 +151,7 @@ def _extract_choice(message: dict[str, Any]) -> tuple[str | None, str]:
         except json.JSONDecodeError:
             pass
         lowered = content.lower()
-        for name in [*tool_names(), FINISH_TOOL_NAME]:
+        for name in [*tool_names(), FINISH_TOOL_NAME, REVIEW_SCOPE_TOOL_NAME]:
             if name in lowered:
                 return name, content.strip()[:200]
     return None, ""
@@ -265,6 +283,63 @@ def _choose_engine(gen_client, host: str, state: dict[str, Any], leads: list[dic
     return get_engine(name), reason
 
 
+def _discovered_hosts(result_dir: Path) -> list[str]:
+    from urllib.parse import urlparse
+
+    def _lines(name: str) -> list[str]:
+        try:
+            return [l.strip() for l in (result_dir / name).read_text(encoding="utf-8").splitlines() if l.strip()]
+        except OSError:
+            return []
+
+    hosts = list(_lines("all_subdomains.txt"))
+    for line in _lines("live_hosts.txt"):
+        hosts.append((urlparse(line).hostname or line) if "://" in line else line)
+    return list(dict.fromkeys(h.strip().lower() for h in hosts if h.strip()))
+
+
+def _stdin_ask(host: str) -> str:
+    try:
+        return input(f"  add to scope? {host}  [a]dd / [b]lock / [s]kip (default skip): ")
+    except EOFError:
+        return "s"
+
+
+def _review_scope(
+    executor: ReconExecutor,
+    program: str,
+    platform: str,
+    result_dir: Path,
+    ask_user: Callable[[str], str] | None,
+    log: Callable[[str], None],
+) -> tuple[str, int]:
+    """Interactively accept/block newly discovered hosts. Returns (summary, n_added)."""
+    mgr = ScopeManager.load_or_create(program, platform, executor.recon_repo / "scopes")
+    proposals = mgr.propose_new(_discovered_hosts(result_dir))
+    if not proposals:
+        return "review_scope: no new hosts — every discovered host is already accepted or blocked.", 0
+    ask = ask_user or _stdin_ask
+    log(f"[review_scope] {len(proposals)} new host(s) to review")
+    added = blocked = skipped = 0
+    for host in proposals:
+        choice = (ask(host) or "s").strip().lower()[:1]
+        if choice in ("a", "y"):
+            mgr.add_host(host)
+            added += 1
+        elif choice in ("b", "n"):
+            mgr.block_host(host)
+            blocked += 1
+        else:
+            skipped += 1
+    mgr.save()
+    summary = (
+        f"review_scope: +{added} added to scope, -{blocked} blocked, {skipped} skipped. "
+        + ("Re-run subdomain_enum to probe the newly added hosts." if added else "Scope unchanged for probing.")
+    )
+    log(f"[review_scope] {summary}")
+    return summary, added
+
+
 def run_recon_agent(
     host: str,
     program: str,
@@ -278,6 +353,7 @@ def run_recon_agent(
     exploit_engine: str = "auto",
     persist_directory: str | Path = DEFAULT_CHROMA_PERSIST_DIRECTORY,
     on_event: Callable[[str], None] | None = None,
+    ask_user: Callable[[str], str] | None = None,
 ) -> AgentRun:
     log = on_event or (lambda _m: None)
 
@@ -336,11 +412,12 @@ def run_recon_agent(
         },
     ]
 
-    tool_schemas = ollama_tool_schemas()
+    tool_schemas = ollama_tool_schemas() + [REVIEW_SCOPE_SCHEMA]
     steps: list[PlannedStep] = []
     stop_reason = "max_steps"
     noop_streak = 0          # consecutive steps that ran nothing (skip/block/error)
     subdomain_reruns = 0     # force at most one re-run of the gating discovery step
+    scope_changed = False    # review_scope added hosts → allow re-probing via subdomain_enum
     MAX_NOOP_STEPS = 3       # bail out instead of spinning to max_steps on no progress
 
     for step_index in range(1, max_steps + 1):
@@ -372,6 +449,15 @@ def run_recon_agent(
             stop_reason = "finished_by_model"
             break
 
+        if name == REVIEW_SCOPE_TOOL_NAME:
+            summary, n_added = _review_scope(executor, program, platform, result_dir, ask_user, log)
+            if n_added:
+                scope_changed = True
+            steps.append(PlannedStep(step_index, name, reason, True, True, summary))
+            messages.append({"role": "tool", "tool_name": name, "content": summary})
+            noop_streak = 0
+            continue
+
         tool = get_tool(name)
         if tool is None:
             note = f"ignored unknown tool '{name}'"
@@ -390,14 +476,19 @@ def run_recon_agent(
             # Exception: the discovery step "completed" but found no live hosts (e.g. a
             # prior run with mis-configured tools). Everything downstream is dead without
             # it, so force exactly one re-run instead of skipping forever.
-            force_rerun = (
+            no_live_rerun = (
                 name == "subdomain_enum"
                 and state.summary().get("live_host_count", 0) == 0
                 and subdomain_reruns == 0
             )
-            if force_rerun:
-                subdomain_reruns += 1
-                log(f"[step {step_index}] {name}: completed but 0 live hosts — forcing one re-run")
+            scope_rerun = name == "subdomain_enum" and scope_changed
+            if no_live_rerun or scope_rerun:
+                if scope_rerun:
+                    scope_changed = False
+                    log(f"[step {step_index}] {name}: scope changed — re-running to probe newly added hosts")
+                else:
+                    subdomain_reruns += 1
+                    log(f"[step {step_index}] {name}: completed but 0 live hosts — forcing one re-run")
             else:
                 note = "capability already completed; not re-running"
                 log(f"[step {step_index}] {name}: {note}")
