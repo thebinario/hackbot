@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.tmp/
+data/vectorstore/chroma/
+
+# Writeups corpus is third-party material (fetched from HackerOne, etc.) and stays local
+data/raw/writeups/
+data/processed/writeups/
+
+# recon experiment repo clones for local pipeline runs
+/auto-bug-bounty/

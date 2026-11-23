@@ -10,7 +10,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PARENT_DIR="$(cd "$ROOT_DIR/.." && pwd)"
-RAG_REPO="$PARENT_DIR/rag-cyber-frameworks"
 RECON_REPO="$PARENT_DIR/auto-bug-bounty"
 
 API_URL="${HACKBOT_API_URL:-http://127.0.0.1:8765}"
@@ -38,19 +37,17 @@ done
 
 [ -z "$HOST" ] || [ -z "$PROGRAM" ] || [ -z "$PLATFORM" ] && usage
 
-for repo_dir in "$RAG_REPO" "$RECON_REPO"; do
-  if [ ! -d "$repo_dir" ]; then
-    echo "[error] expected sibling repo missing: $repo_dir (run ./setup.sh first)" >&2
-    exit 1
-  fi
-done
+if [ ! -d "$RECON_REPO" ]; then
+  echo "[error] expected sibling repo missing: $RECON_REPO (run ./setup.sh first)" >&2
+  exit 1
+fi
 
-echo "== Step 1/3: writeups API =="
+echo "== Step 1/3: writeups API (this repo) =="
 if curl --silent --fail --max-time 2 "$API_HEALTH" >/dev/null 2>&1; then
   echo "[ok] API already running at $API_URL"
 else
   echo "[start] launching serve_api.py in the background"
-  (cd "$RAG_REPO" && nohup .venv/bin/python scripts/serve_api.py >/tmp/hackbot_api.log 2>&1 &)
+  (cd "$ROOT_DIR" && nohup .venv/bin/python scripts/serve_api.py >/tmp/hackbot_api.log 2>&1 &)
   for _ in $(seq 1 30); do
     sleep 1
     if curl --silent --fail --max-time 2 "$API_HEALTH" >/dev/null 2>&1; then

@@ -1,49 +1,23 @@
-# Clones rag-cyber-frameworks and auto-bug-bounty as sibling folders of this
-# repo, sets up a venv + dependencies for each, and pulls the Ollama models
-# the RAG pipeline needs. Safe to re-run: skips any step already done.
+# Sets up hackbot itself (venv + deps), pulls the Ollama models it needs, and clones
+# auto-bug-bounty as a sibling folder -- the recon side still lives there until its
+# hunt_rag.py bridge is validated enough to migrate into this repo too.
 
 $ErrorActionPreference = "Stop"
 
 $RootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ParentDir = Split-Path -Parent $RootDir
-
-$RagRepo = Join-Path $ParentDir "rag-cyber-frameworks"
 $ReconRepo = Join-Path $ParentDir "auto-bug-bounty"
-
 $GitUser = if ($env:HACKBOT_GITHUB_USER) { $env:HACKBOT_GITHUB_USER } else { "thebinario" }
 
-function Clone-IfMissing($Dir, $Name) {
-    if (Test-Path (Join-Path $Dir ".git")) {
-        Write-Host "[skip] $Name already cloned at $Dir"
-    } else {
-        Write-Host "[clone] $Name -> $Dir"
-        git clone "https://github.com/$GitUser/$Name.git" $Dir
-    }
+Write-Host "== hackbot's own environment =="
+$venv = Join-Path $RootDir ".venv"
+if (-not (Test-Path $venv)) {
+    Write-Host "[venv] creating .venv"
+    python -m venv $venv
 }
-
-function Setup-Venv($Dir, $Name) {
-    $req = Join-Path $Dir "requirements.txt"
-    if (-not (Test-Path $req)) {
-        Write-Host "[warn] $Name has no requirements.txt, skipping venv setup"
-        return
-    }
-    $venv = Join-Path $Dir ".venv"
-    if (-not (Test-Path $venv)) {
-        Write-Host "[venv] creating $Name\.venv"
-        python -m venv $venv
-    }
-    Write-Host "[deps] installing $Name requirements"
-    & "$venv\Scripts\pip.exe" install --quiet --upgrade pip
-    & "$venv\Scripts\pip.exe" install --quiet -r $req
-}
-
-Write-Host "== Cloning sibling repos =="
-Clone-IfMissing $RagRepo "rag-cyber-frameworks"
-Clone-IfMissing $ReconRepo "auto-bug-bounty"
-
-Write-Host "== Python environments =="
-Setup-Venv $RagRepo "rag-cyber-frameworks"
-Setup-Venv $ReconRepo "auto-bug-bounty"
+Write-Host "[deps] installing requirements.txt"
+& "$venv\Scripts\pip.exe" install --quiet --upgrade pip
+& "$venv\Scripts\pip.exe" install --quiet -r (Join-Path $RootDir "requirements.txt")
 
 Write-Host "== Ollama models =="
 if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {
@@ -55,11 +29,26 @@ if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {
     }
 }
 
+Write-Host "== Recon lab (auto-bug-bounty, still experimental) =="
+if (Test-Path (Join-Path $ReconRepo ".git")) {
+    Write-Host "[skip] auto-bug-bounty already cloned at $ReconRepo"
+} else {
+    Write-Host "[clone] auto-bug-bounty -> $ReconRepo"
+    git clone "https://github.com/$GitUser/auto-bug-bounty.git" $ReconRepo
+}
+$reconReq = Join-Path $ReconRepo "requirements.txt"
+if (Test-Path $reconReq) {
+    $reconVenv = Join-Path $ReconRepo ".venv"
+    if (-not (Test-Path $reconVenv)) {
+        python -m venv $reconVenv
+    }
+    & "$reconVenv\Scripts\pip.exe" install --quiet --upgrade pip
+    & "$reconVenv\Scripts\pip.exe" install --quiet -r $reconReq
+}
+
 Write-Host ""
-Write-Host "Setup finished. Layout:"
-Write-Host "  $ParentDir\"
-Write-Host "    hackbot\                 (this repo)"
-Write-Host "    rag-cyber-frameworks\"
-Write-Host "    auto-bug-bounty\"
+Write-Host "Setup finished."
+Write-Host "  $RootDir          <- hackbot (RAG de writeups, roda sozinho)"
+Write-Host "  $ReconRepo  <- recon experimental, chama o hackbot via HTTP local"
 Write-Host ""
-Write-Host "Next: .\run_pipeline.ps1 -TargetHost <host> -Program <program> -Platform <hackerone|intigriti>"
+Write-Host "Proximo passo: .\run_pipeline.ps1 -TargetHost <host> -Program <program> -Platform <hackerone|intigriti>"

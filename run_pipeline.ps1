@@ -26,14 +26,11 @@ $ErrorActionPreference = "Stop"
 
 $RootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ParentDir = Split-Path -Parent $RootDir
-$RagRepo = Join-Path $ParentDir "rag-cyber-frameworks"
 $ReconRepo = Join-Path $ParentDir "auto-bug-bounty"
 
-foreach ($dir in @($RagRepo, $ReconRepo)) {
-    if (-not (Test-Path $dir)) {
-        Write-Error "Expected sibling repo missing: $dir (run .\setup.ps1 first)"
-        exit 1
-    }
+if (-not (Test-Path $ReconRepo)) {
+    Write-Error "Expected sibling repo missing: $ReconRepo (run .\setup.ps1 first)"
+    exit 1
 }
 
 function Test-ApiHealth {
@@ -45,13 +42,13 @@ function Test-ApiHealth {
     }
 }
 
-Write-Host "== Step 1/3: writeups API =="
+Write-Host "== Step 1/3: writeups API (this repo) =="
 if (Test-ApiHealth) {
     Write-Host "[ok] API already running at $ApiUrl"
 } else {
     Write-Host "[start] launching serve_api.py in the background"
-    $pythonExe = Join-Path $RagRepo ".venv\Scripts\python.exe"
-    Start-Process -FilePath $pythonExe -ArgumentList "scripts\serve_api.py" -WorkingDirectory $RagRepo -WindowStyle Hidden
+    $pythonExe = Join-Path $RootDir ".venv\Scripts\python.exe"
+    Start-Process -FilePath $pythonExe -ArgumentList "scripts\serve_api.py" -WorkingDirectory $RootDir -WindowStyle Hidden
     $ready = $false
     for ($i = 0; $i -lt 30; $i++) {
         Start-Sleep -Seconds 1

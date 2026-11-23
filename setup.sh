@@ -1,49 +1,22 @@
 #!/usr/bin/env bash
-# Clones rag-cyber-frameworks and auto-bug-bounty as sibling folders of this
-# repo, sets up a venv + dependencies for each, and pulls the Ollama models
-# the RAG pipeline needs. Safe to re-run: skips any step already done.
+# Sets up hackbot itself (venv + deps), pulls the Ollama models it needs, and clones
+# auto-bug-bounty as a sibling folder — the recon side still lives there until its
+# hunt_rag.py bridge is validated enough to migrate into this repo too.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PARENT_DIR="$(cd "$ROOT_DIR/.." && pwd)"
-
-RAG_REPO="$PARENT_DIR/rag-cyber-frameworks"
 RECON_REPO="$PARENT_DIR/auto-bug-bounty"
-
 GIT_USER="${HACKBOT_GITHUB_USER:-thebinario}"
 
-clone_if_missing() {
-  local dir="$1" name="$2"
-  if [ -d "$dir/.git" ]; then
-    echo "[skip] $name already cloned at $dir"
-  else
-    echo "[clone] $name -> $dir"
-    git clone "https://github.com/$GIT_USER/$name.git" "$dir"
-  fi
-}
-
-setup_venv() {
-  local dir="$1" name="$2"
-  if [ ! -f "$dir/requirements.txt" ]; then
-    echo "[warn] $name has no requirements.txt, skipping venv setup"
-    return
-  fi
-  if [ ! -d "$dir/.venv" ]; then
-    echo "[venv] creating $name/.venv"
-    python3 -m venv "$dir/.venv"
-  fi
-  echo "[deps] installing $name requirements"
-  "$dir/.venv/bin/pip" install --quiet --upgrade pip
-  "$dir/.venv/bin/pip" install --quiet -r "$dir/requirements.txt"
-}
-
-echo "== Cloning sibling repos =="
-clone_if_missing "$RAG_REPO" "rag-cyber-frameworks"
-clone_if_missing "$RECON_REPO" "auto-bug-bounty"
-
-echo "== Python environments =="
-setup_venv "$RAG_REPO" "rag-cyber-frameworks"
-setup_venv "$RECON_REPO" "auto-bug-bounty"
+echo "== hackbot's own environment =="
+if [ ! -d "$ROOT_DIR/.venv" ]; then
+  echo "[venv] creating .venv"
+  python3 -m venv "$ROOT_DIR/.venv"
+fi
+echo "[deps] installing requirements.txt"
+"$ROOT_DIR/.venv/bin/pip" install --quiet --upgrade pip
+"$ROOT_DIR/.venv/bin/pip" install --quiet -r "$ROOT_DIR/requirements.txt"
 
 echo "== Ollama models =="
 if ! command -v ollama >/dev/null 2>&1; then
@@ -55,13 +28,26 @@ else
   done
 fi
 
+echo "== Recon lab (auto-bug-bounty, still experimental) =="
+if [ -d "$RECON_REPO/.git" ]; then
+  echo "[skip] auto-bug-bounty already cloned at $RECON_REPO"
+else
+  echo "[clone] auto-bug-bounty -> $RECON_REPO"
+  git clone "https://github.com/$GIT_USER/auto-bug-bounty.git" "$RECON_REPO"
+fi
+if [ -f "$RECON_REPO/requirements.txt" ]; then
+  if [ ! -d "$RECON_REPO/.venv" ]; then
+    python3 -m venv "$RECON_REPO/.venv"
+  fi
+  "$RECON_REPO/.venv/bin/pip" install --quiet --upgrade pip
+  "$RECON_REPO/.venv/bin/pip" install --quiet -r "$RECON_REPO/requirements.txt"
+fi
+
 cat <<EOF
 
-Setup finished. Layout:
-  $PARENT_DIR/
-    hackbot/                 (this repo)
-    rag-cyber-frameworks/
-    auto-bug-bounty/
+Setup finished.
+  $ROOT_DIR          <- hackbot (RAG de writeups, roda sozinho)
+  $RECON_REPO  <- recon experimental, chama o hackbot via HTTP local
 
-Next: ./run_pipeline.sh --host <host> --program <program> --platform <hackerone|intigriti>
+Próximo passo: ./run_pipeline.sh --host <host> --program <program> --platform <hackerone|intigriti>
 EOF

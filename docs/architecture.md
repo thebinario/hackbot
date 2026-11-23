@@ -1,53 +1,73 @@
 # Arquitetura
 
-## Visão geral
+## Estado atual
 
 ```
-                         ┌─────────────────────────────┐
-                         │        hackbot (este repo)  │
-                         │  setup.ps1/.sh               │
-                         │  run_pipeline.ps1/.sh         │
-                         └──────────────┬───────────────┘
-                                         │ orquestra
-                 ┌───────────────────────┴────────────────────────┐
-                 │                                                  │
-                 ▼                                                  ▼
-┌─────────────────────────────────┐              ┌──────────────────────────────────┐
-│  auto-bug-bounty                │              │  rag-cyber-frameworks             │
-│  (recon, privado, CI no GitHub) │              │  (RAG local, público)             │
-│                                  │   HTTP        │                                    │
-│  scripts/recon/hunt.py          │──localhost──▶│  scripts/serve_api.py (porta 8765) │
-│  scripts/recon/hunt_rag.py      │  127.0.0.1    │  POST /analyze                     │
-│                                  │◀─────────────│                                    │
-│  results/<program>/<host>/      │   resposta    │  Ollama (qwen2.5:7b-instruct,     │
-│    hunt_profile.json            │   JSON        │           nomic-embed-text)        │
-│    hunt_hypotheses.json         │              │  ChromaDB (data/vectorstore/)      │
-│    hunt_playbook.md             │              │  writeups indexados (HackerOne)    │
-│    hunt_rag_analysis.json/.md   │              │                                    │
-└─────────────────────────────────┘              └──────────────────────────────────┘
+┌───────────────────────────────────────────┐        ┌──────────────────────────────────┐
+│  hackbot (este repo — projeto real)        │        │  auto-bug-bounty (laboratório)    │
+│                                             │  HTTP   │                                    │
+│  app/writeups/* (schema, extractor,        │◀───────│  scripts/recon/hunt.py            │
+│    store, analyzer, query_rewrite,         │ 127.0.0.1│  scripts/recon/hunt_rag.py        │
+│    api, hackerone fetcher)                 │ :8765   │                                    │
+│                                             │────────▶│  results/<program>/<host>/        │
+│  scripts/serve_api.py (porta 8765)         │ resposta│    hunt_profile.json              │
+│  scripts/ingest_writeups.py                │  JSON   │    hunt_rag_analysis.json/.md      │
+│  scripts/analyze_scenario.py               │        │                                    │
+│  scripts/fetch_writeups.py                 │        │  (CI no GitHub, scopes/, scanners) │
+│                                             │        │                                    │
+│  Ollama (qwen2.5:7b-instruct,              │        └──────────────────────────────────┘
+│           nomic-embed-text)                │
+│  ChromaDB (data/vectorstore/)              │
+└───────────────────────────────────────────┘
 ```
 
-## Fluxo de dados, passo a passo
+`hackbot` já hospeda o módulo de RAG de writeups como código próprio — não depende mais de
+clonar `rag-cyber-frameworks` ao lado para funcionar. `auto-bug-bounty` continua sendo o
+laboratório onde o recon e a ponte `hunt_rag.py` são testados; ele chama a API deste repo
+por HTTP, sempre em `127.0.0.1`.
 
-1. **CI do `auto-bug-bounty`** escaneia hosts dentro do escopo (`scopes/<platform>/<program>.json`) e commita os resultados em `results/<program>/<host>/` (subdomínios, portas, crawl, fuzz, tech-detect). Isso roda independente deste orquestrador, no GitHub Actions.
-2. **`hunt.py`** (já existente em `auto-bug-bounty`) lê esses artefatos committed e monta `hunt_profile.json` — um resumo estruturado do host (stack detectada, endpoints, findings de fuzzing/vuln-scan). Gera também hipóteses por regras (`hunt_hypotheses.json`, `hunt_playbook.md`), sem depender do hackbot.
-3. **`serve_api.py`** (em `rag-cyber-frameworks`) sobe uma API HTTP local, restrita a `127.0.0.1` por padrão, que recebe um cenário e devolve os writeups mais parecidos (via embeddings no ChromaDB) mais uma análise gerada pelo LLM local, citando só esses reports.
-4. **`hunt_rag.py`** (em `auto-bug-bounty`) lê o `hunt_profile.json` do host, monta um payload de cenário (stack, endpoints, findings — nada de credenciais, nada além do que já estava no profile) e faz **uma única chamada HTTP para `127.0.0.1:8765`**. Nunca contata o host alvo.
-5. A resposta é gravada em `hunt_rag_analysis.md`/`.json` ao lado dos outros artefatos do host, com um aviso fixo no topo do markdown dizendo que são hipóteses para validação manual, não instruções para executar automaticamente.
-6. **`hackbot/run_pipeline.*`** só automatiza os passos 3–5 localmente, um host de cada vez, para quem não quer digitar os três comandos na mão toda vez.
+## Por que a migração é incremental
 
-## Por que isso é seguro por design
+`rag-cyber-frameworks` guarda também um pipeline genérico de RAG sobre frameworks ofensivos
+(chunking de documentos arbitrários, embeddings em lote, busca em `chunk_embeddings`) que o
+hackbot nunca usou. Trazer o repositório inteiro traria código morto para o projeto real.
+Em vez disso, cada migração:
 
-- O único tráfego de rede do `hunt_rag.py` é para `127.0.0.1` — nunca para o host sendo investigado.
-- O LLM e o índice vetorial só existem na máquina local de quem roda; por isso essa ponte **não** faz parte do pipeline de CI do `auto-bug-bounty` (não existe Ollama rodando nos runners do GitHub Actions).
-- A saída é sempre hipótese textual para leitura humana — não há nenhum caminho de código que pegue uma hipótese e dispare uma requisição contra o alvo. Isso é intencional e não deve ser alterado: este orquestrador, assim como os dois repos que ele une, é recon/análise, não exploração automatizada.
+1. Identifica o que já está validado de ponta a ponta (testes + uso manual real).
+2. Copia só os arquivos que esse pedaço de fato importa.
+3. Corta o que sobra (ex.: `app/rag/vector_store.py` aqui tem só a constante do diretório do
+   Chroma, não as funções de indexação de chunks genéricos, que ficam só no laboratório).
+4. Roda a suíte de testes migrada para confirmar que o recorte não quebrou nada.
 
-## Onde cada coisa mora
+O mesmo vai acontecer com `auto-bug-bounty` quando o fluxo recon → `hunt.py` → `hunt_rag.py`
+estiver validado em uso real (hoje só tem cobertura por testes com HTTP mockado, não uma
+rodada de ponta a ponta na máquina do operador). Quando isso acontecer, a parte que fizer
+sentido trazer para cá entra como um módulo próprio do hackbot, e o resto continua no
+laboratório de recon.
 
-| Pergunta | Repositório |
-|---|---|
-| Como adicionar um programa/escopo novo? | `auto-bug-bounty` |
-| Como adicionar um novo módulo de recon? | `auto-bug-bounty` |
-| Como indexar novos writeups? | `rag-cyber-frameworks` |
-| Como ajustar a qualidade do retrieval (prefixos, rewrite, bônus de classe)? | `rag-cyber-frameworks` |
-| Como rodar os dois juntos para um host? | `hackbot` (este repo) |
+## Rodando o fluxo completo hoje
+
+Enquanto o recon ainda mora em `auto-bug-bounty`, o fluxo de ponta a ponta precisa dos dois
+repositórios lado a lado:
+
+```
+workspace/
+├── hackbot/            (este repo)
+└── auto-bug-bounty/    (clonado à parte)
+```
+
+```bash
+# neste repo
+python scripts/serve_api.py &
+
+# no auto-bug-bounty
+python scripts/recon/hunt.py --host example.com --program my-prog --platform hackerone
+python scripts/recon/hunt_rag.py --host example.com --program my-prog --platform hackerone
+```
+
+## Segurança por design
+
+- O único tráfego de rede entre os dois lados é uma chamada HTTP para `127.0.0.1` — nunca
+  para o host investigado.
+- A saída é sempre hipótese textual para leitura humana. Não existe, e não deve existir,
+  nenhum caminho de código que pegue uma hipótese e dispare uma ação contra o alvo.

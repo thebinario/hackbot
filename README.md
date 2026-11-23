@@ -1,71 +1,94 @@
 # hackbot
 
-Orquestrador local que liga dois repositórios já existentes:
+Assistente local de reconhecimento ofensivo: um RAG que roda inteiramente na sua máquina
+(Ollama + ChromaDB), indexa writeups/reports de bug bounty e gera hipóteses fundamentadas
+para um cenário de recon.
 
-- **[rag-cyber-frameworks](https://github.com/thebinario/rag-cyber-frameworks)** — a base de conhecimento: RAG local (Ollama + ChromaDB) que indexa writeups/reports de bug bounty e responde perguntas sobre um cenário, com hipóteses fundamentadas nos reports mais próximos.
-- **[auto-bug-bounty](https://github.com/thebinario/auto-bug-bounty)** — o pipeline de recon: scanners (subfinder, amass, httpx, nmap, katana, ffuf, whatweb, nuclei) rodando em CI contra alvos dentro do escopo de programas no HackerOne/Intigriti.
+## Status: migrando de experimentos para projeto único
 
-Este repositório **não duplica código** de nenhum dos dois. Ele só:
+Este código nasceu em dois repositórios de experimentação, que continuam existindo como
+laboratório:
 
-1. Clona os dois repositórios como pastas irmãs.
-2. Sobe o Ollama e a API local de análise (`rag-cyber-frameworks`).
-3. Roda o recon + a ponte `hunt_rag.py` (`auto-bug-bounty`) para um host específico.
-4. Documenta como as peças se encaixam.
+- **[rag-cyber-frameworks](https://github.com/thebinario/rag-cyber-frameworks)** — onde o
+  pipeline de RAG para writeups foi prototipado e validado (extração, embeddings com prefixos
+  do `nomic-embed-text`, query rewrite, API local). **Já migrado para cá.**
+- **[auto-bug-bounty](https://github.com/thebinario/auto-bug-bounty)** — pipeline de recon CI
+  (subfinder, amass, httpx, nmap, katana, ffuf, whatweb, nuclei) contra programas no
+  HackerOne/Intigriti, e a ponte experimental `hunt_rag.py` que chama este serviço. **Ainda
+  não migrado** — continua sendo consumido como repo irmão até o fluxo de recon+bridge estar
+  validado em produção, como o RAG de writeups já está.
 
-## Por que um terceiro repositório?
+A regra é: os dois repos continuam como PoC/laboratório; só o que já funciona de ponta a
+ponta é trazido para cá, e só o necessário — sem duplicar o resto do framework genérico de
+RAG que não é usado pelo hackbot.
 
-`rag-cyber-frameworks` é público e genérico (framework de conhecimento ofensivo, não específico de bug bounty). `auto-bug-bounty` é privado e tem um histórico grande de `results/` auto-commitado pela CI. Misturar os dois complicaria licenciamento e visibilidade. Em vez disso, cada um continua independente e este repo guarda só a "cola": scripts de setup e o passo a passo de como rodar os dois juntos.
-
-## Layout esperado no disco
+## O que tem aqui hoje
 
 ```
-workspace/
-├── hackbot/                 (este repo)
-├── rag-cyber-frameworks/    (clonado pelo setup)
-└── auto-bug-bounty/         (clonado pelo setup)
+app/
+├── runtime.py          # checagem de versão do Python
+├── ingest/
+│   ├── cleaner.py       # limpeza de texto antes da extração
+│   ├── ollama_client.py # cliente HTTP (stdlib) para geração e embeddings no Ollama
+│   └── source_loaders.py# carrega .md/.txt/.html/.pdf
+├── rag/
+│   ├── generator.py     # strip_think_tags + constantes do Ollama
+│   └── vector_store.py  # caminho do índice Chroma local
+└── writeups/            # o módulo em si: schema, extractor, store, analyzer,
+                          # query_rewrite, api, hackerone (fetcher de reports)
+scripts/
+├── ingest_writeups.py   # extrai e indexa reports locais
+├── analyze_scenario.py  # pergunta sobre um cenário via CLI
+├── serve_api.py         # sobe a API local (porta 8765)
+└── fetch_writeups.py    # baixa reports públicos/disclosed do HackerOne
+tests/                   # 90 testes, cobrindo todo o módulo writeups
 ```
+
+Isto é exatamente o que existia em `rag-cyber-frameworks` sob `app/writeups/`, mais o
+mínimo de `app/ingest` e `app/rag` que ele realmente importa — sem o pipeline genérico de
+RAG sobre frameworks (chunking, embeddings de documentos arbitrários, etc.), que não faz
+parte do hackbot.
 
 ## Setup
 
-### Windows (PowerShell)
-
-```powershell
-.\setup.ps1
+```bash
+python3 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
-### Linux / macOS
+Precisa de [Ollama](https://ollama.com) instalado à parte, com os modelos:
 
 ```bash
-./setup.sh
+ollama pull qwen2.5:7b-instruct
+ollama pull nomic-embed-text
 ```
 
-O script:
-- Clona `rag-cyber-frameworks` e `auto-bug-bounty` como pastas irmãs de `hackbot/` (pula se já existirem).
-- Cria o virtualenv de cada repo e instala as dependências (`requirements.txt`).
-- Confere se o Ollama está instalado e puxa os modelos usados (`qwen2.5:7b-instruct`, `nomic-embed-text`).
-
-Pré-requisitos: Git, Python 3.11+, [Ollama](https://ollama.com) instalado à parte (o script só verifica/puxa os modelos, não instala o Ollama em si).
-
-## Rodando a pipeline completa para um host
-
-```powershell
-.\run_pipeline.ps1 -TargetHost example.com -Program my-prog -Platform hackerone
-```
+## Uso
 
 ```bash
-./run_pipeline.sh --host example.com --program my-prog --platform hackerone
+# 1. indexar reports (coloque .md/.txt/.html/.pdf em data/raw/writeups/)
+python scripts/ingest_writeups.py
+
+# 2. perguntar sobre um cenário
+python scripts/analyze_scenario.py "mutation updateOrder aceita orderId de outro usuário"
+
+# 3. ou subir a API local para outra ferramenta consultar (ex.: hunt_rag.py do auto-bug-bounty)
+python scripts/serve_api.py
 ```
 
-Isso faz, em sequência:
+Veja [`docs/architecture.md`](docs/architecture.md) para como isso se encaixa com o pipeline
+de recon ainda hospedado em `auto-bug-bounty`.
 
-1. Sobe `serve_api.py` em background (`rag-cyber-frameworks`), se ainda não estiver rodando.
-2. Roda `hunt.py` (`auto-bug-bounty`) para gerar `hunt_profile.json` a partir dos resultados de recon já commitados para aquele host.
-3. Roda `hunt_rag.py` (`auto-bug-bounty`), que envia o resumo do recon (stack, endpoints, findings — nada além do que `hunt_profile.json` já tem) para a API local e grava `hunt_rag_analysis.md`/`.json` nos resultados do host.
+## Testes
 
-Veja [`docs/architecture.md`](docs/architecture.md) para o diagrama completo do fluxo de dados.
+```bash
+python -m pytest
+```
 
 ## Escopo e segurança
 
-- Tudo roda local: o único tráfego de rede do `hunt_rag.py` é uma chamada HTTP para `127.0.0.1`, nunca para o alvo.
-- O recon em si (`auto-bug-bounty`) só escaneia hosts listados em `scopes/`, respeitando as regras de cada programa.
-- A saída do hackbot é **hipótese para validação manual**, nunca execução automática de exploração. Isso vale também para qualquer extensão futura deste orquestrador.
+- Tudo roda local: nenhuma chamada de rede sai para o alvo que está sendo investigado.
+- A saída é sempre **hipótese para validação manual** — nunca execução automática de
+  exploração contra um alvo real. Isso vale para este repositório e para qualquer extensão
+  futura dele.
