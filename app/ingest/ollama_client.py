@@ -99,6 +99,34 @@ class OllamaGenerationClient(OllamaClient):
 
         raise RuntimeError("Ollama response did not contain a usable text generation")
 
+    def chat(
+        self,
+        messages: list[dict[str, object]],
+        tools: list[dict[str, object]] | None = None,
+        options: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Multi-turn chat with optional tool-calling. Returns the raw assistant message.
+
+        The returned message may contain ``content`` and/or ``tool_calls``. Callers append
+        it back to the running ``messages`` list, then add ``{"role": "tool", ...}`` results.
+        """
+        request_body: dict[str, object] = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            "think": False,
+        }
+        if tools:
+            request_body["tools"] = tools
+        if options:
+            request_body["options"] = options
+
+        payload = self._post_json("/api/chat", request_body)
+        message = payload.get("message")
+        if isinstance(message, dict):
+            return message
+        raise RuntimeError("Ollama chat response did not contain a message")
+
     def generate_stream(self, prompt: str, options: dict[str, object] | None = None) -> Iterator[str]:
         request_body: dict[str, object] = {
             "model": self.model,

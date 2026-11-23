@@ -6,8 +6,8 @@ para um cenário de recon.
 
 ## Status: migrando de experimentos para projeto único
 
-Este código nasceu em dois repositórios de experimentação, que continuam existindo como
-laboratório. Ambos ficam versionados como submódulos Git em `external/`:
+Este código nasceu em repositórios de experimentação, que continuam existindo como
+laboratório. Eles ficam versionados como submódulos Git em `external/`:
 
 - **[rag-cyber-frameworks](https://github.com/thebinario/rag-cyber-frameworks)** — onde o
   pipeline de RAG para writeups foi prototipado e validado (extração, embeddings com prefixos
@@ -17,6 +17,10 @@ laboratório. Ambos ficam versionados como submódulos Git em `external/`:
   HackerOne/Intigriti, e a ponte experimental `hunt_rag.py` que chama este serviço. **Ainda
   não migrado** — continua sendo consumido como submódulo em `external/auto-bug-bounty` até o
   fluxo de recon+bridge estar validado em produção, como o RAG de writeups já está.
+- **[auto-vuln](https://github.com/thebinario/auto-vuln)** — validador ofensivo **read-only**:
+  checks ativos (headers, banner/versões EOL, arquivos sensíveis, directory listing, error
+  disclosure e SQLi por erro/boolean sem extrair dados) com gate de autorização. É o par
+  ofensivo do recon, e alimenta achados para o RAG.
 
 A regra é: os dois repos continuam como PoC/laboratório; só o que já funciona de ponta a
 ponta é trazido para cá, e só o necessário — sem duplicar o resto do framework genérico de
@@ -44,13 +48,36 @@ scripts/
 tests/                   # 90 testes, cobrindo todo o módulo writeups
 external/                # submódulos Git (ver .gitmodules)
 ├── auto-bug-bounty/     # recon experimental, chama a API via HTTP
-└── rag-cyber-frameworks/# laboratório do RAG genérico
+├── rag-cyber-frameworks/# laboratório do RAG genérico
+└── auto-vuln/           # validação ofensiva read-only (gera achados)
 ```
 
 Isto é exatamente o que existia em `rag-cyber-frameworks` sob `app/writeups/`, mais o
 mínimo de `app/ingest` e `app/rag` que ele realmente importa — sem o pipeline genérico de
 RAG sobre frameworks (chunking, embeddings de documentos arbitrários, etc.), que não faz
 parte do hackbot.
+
+## Ferramentas irmãs (submódulos)
+
+O fluxo completo usa três peças, cada uma num submódulo em `external/`:
+
+```
+auto-bug-bounty (recon)  ->  auto-vuln (validação ativa read-only)  ->  hackbot (RAG)
+   mapeia a superfície         confirma fraquezas comuns                 fundamenta hipóteses
+```
+
+O `auto-vuln` é ofensivo por natureza, mas **read-only**: só `GET`/`HEAD`, sem exploração,
+sem extração de dados e sem alterar o alvo. Exige `--authorized` e um allowlist de host:
+
+```bash
+cd external/auto-vuln
+python -m autovuln --target http://businesscorp.com.br/ --authorized --allow businesscorp.com.br \
+  --from-recon ../auto-bug-bounty/results/businesscorp-ctf/businesscorp.com.br \
+  --out results/businesscorp
+```
+
+`businesscorp.com.br` é a empresa fictícia criada pela Desec Security para treinamento/CTF,
+então é um alvo autorizado para esses testes.
 
 ## Setup
 

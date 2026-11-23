@@ -68,9 +68,19 @@ python scripts/recon/hunt.py --host example.com --program my-prog --platform hac
 python scripts/recon/hunt_rag.py --host example.com --program my-prog --platform hackerone
 ```
 
+## Validação ofensiva (auto-vuln)
+
+Entre o recon e o RAG existe o `external/auto-vuln`, um validador **read-only**. Ele lê a
+superfície já mapeada (`crawl_urls.txt`, `crawl_api_endpoints.txt` do recon) e faz checks
+ativos de baixo risco — headers, banner/versões EOL, arquivos sensíveis, directory listing,
+error disclosure e SQLi por erro/boolean — gravando `findings.json` e `report.md`. Nunca
+explora, nunca extrai dados e recusa rodar sem `--authorized` + allowlist de host.
+
 ## Segurança por design
 
-- O único tráfego de rede entre os dois lados é uma chamada HTTP para `127.0.0.1` — nunca
-  para o host investigado.
-- A saída é sempre hipótese textual para leitura humana. Não existe, e não deve existir,
-  nenhum caminho de código que pegue uma hipótese e dispare uma ação contra o alvo.
+- O `hackbot` (RAG) fala apenas com `127.0.0.1`; nunca contata o alvo investigado.
+- A saída do `hackbot` é sempre hipótese textual para leitura humana — não existe caminho que
+  pegue uma hipótese e dispare ação contra o alvo.
+- O único componente que contata o alvo é o `auto-vuln`, e só sob autorização explícita
+  (`--authorized` + allowlist), em modo read-only (`GET`/`HEAD`), com rate limit e teto de
+  requisições. Ele nunca explora, altera estado ou extrai dados.

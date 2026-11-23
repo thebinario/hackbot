@@ -4,3 +4,9 @@
 [submodule "external/rag-cyber-frameworks"]
 	path = external/rag-cyber-frameworks
 	url = https://github.com/thebinario/rag-cyber-frameworks.git
+[submodule "external/auto-exploit"]
+	path = external/auto-exploit
+	url = https://github.com/thebinario/auto-exploit.git
+[submodule "external/auto-vuln"]
+	path = external/auto-vuln
+	url = https://github.com/thebinario/auto-vuln.git
