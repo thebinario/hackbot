@@ -25,6 +25,10 @@ from .tool_registry import ReconTool, get_tool
 # hackbot repo root (…/app/orchestrator/executor.py -> parents[2]).
 _HACKBOT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RECON_REPO = _HACKBOT_ROOT / "external" / "auto-bug-bounty"
+# Project default install location for recon binaries (subfinder, httpx, nuclei, ffuf,
+# katana). ~/recon-tools resolves per-user (e.g. C:\Users\<you>\recon-tools) so it need
+# not be passed on every run. Override with --tools-dir or HACKBOT_RECON_TOOLS_DIR.
+DEFAULT_RECON_TOOLS_DIR = Path.home() / "recon-tools"
 
 
 @dataclass
@@ -100,7 +104,13 @@ class ReconExecutor:
         self.platform = platform
         self.output_dir = output_dir
         self.recon_repo = Path(recon_repo or os.getenv("HACKBOT_RECON_REPO", DEFAULT_RECON_REPO)).resolve()
-        self.tools_dir = tools_dir or os.getenv("HACKBOT_RECON_TOOLS_DIR", "")
+        # Resolve tools dir: explicit arg > env var > project default (~/recon-tools if it
+        # exists). Normalized to a native absolute path so a bash-style "/c/..." or "~"
+        # can't slip onto PATH where Windows Python won't understand it.
+        chosen = tools_dir or os.getenv("HACKBOT_RECON_TOOLS_DIR") or (
+            str(DEFAULT_RECON_TOOLS_DIR) if DEFAULT_RECON_TOOLS_DIR.is_dir() else ""
+        )
+        self.tools_dir = str(Path(chosen).expanduser().resolve()) if chosen else ""
         self.python = python_executable or sys.executable
         self.step_timeout_seconds = step_timeout_seconds
 

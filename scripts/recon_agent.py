@@ -38,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--program", required=True)
     parser.add_argument("--platform", required=True, help="hackerone | intigriti | lab")
     parser.add_argument("--output-dir", default="results", help="Recon results dir (relative to the recon repo).")
-    parser.add_argument("--tools-dir", default=None, help="Dir with recon binaries (subfinder, httpx, ...) to prepend to PATH.")
+    parser.add_argument("--tools-dir", default=None, help="Dir with recon binaries (subfinder, httpx, ...) to prepend to PATH. Default: ~/recon-tools (or HACKBOT_RECON_TOOLS_DIR).")
     parser.add_argument("--recon-repo", default=None, help=f"Path to auto-bug-bounty (default: {DEFAULT_RECON_REPO}).")
     parser.add_argument("--max-steps", type=int, default=8)
     parser.add_argument("--top-k", type=int, default=4)
